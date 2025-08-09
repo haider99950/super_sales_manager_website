@@ -1,9 +1,11 @@
-from flask_sqlalchemy import SQLAlchemy
+# db.py
+
+# This file now imports the db instance from the main application file (app.py)
+# so we don't have to initialize it multiple times.
+
+from app import db # The change is here! We are importing `db` from app.py
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
-
-# Create the SQLAlchemy instance without passing the app
-db = SQLAlchemy()
 
 # This is our User model. We will store user data here.
 class User(db.Model):
@@ -16,10 +18,6 @@ class User(db.Model):
     is_verified = db.Column(db.Boolean, default=False)
     is_activated = db.Column(db.Boolean, default=False) # New column for account activation status
 
-    # Store creation and update timestamps
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-
     def set_password(self, password):
         """Hashes the password and sets the password_hash."""
         self.password_hash = generate_password_hash(password)
@@ -29,4 +27,5 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
     def __repr__(self):
-        return '<User %r>' % self.email
+        return f'<User {self.email}>'
+
