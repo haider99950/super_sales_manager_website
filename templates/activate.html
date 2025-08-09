@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activate Your Account</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        :root {
+            /* Special, deep space-like color palette */
+            --bg-color-start: #0f2027; /* Dark Blue-Grey */
+            --bg-color-mid: #203a43; /* Darker Teal */
+            --bg-color-end: #2c5364; /* Desaturated Cyan */
+            --accent-color: #00e5ff; /* Vibrant Cyan */
+            --accent-hover: #00b8d4; /* Darker Vibrant Cyan */
+            --text-light: #e0f7fa; /* Light Cyan */
+            --text-muted: #b2ebf2; /* Lighter Cyan */
+            --btn-text: #0f2027; /* Dark Blue-Grey for button text */
+            --shadow-light: rgba(0, 0, 0, 0.25);
+            --shadow-medium: rgba(0, 0, 0, 0.4);
+            --card-bg: rgba(44, 83, 100, 0.6); /* Semi-transparent card background */
+            --language-bg: rgba(44, 83, 100, 0.8); /* Semi-transparent language chooser background */
+            --input-bg: rgba(255, 255, 255, 0.05);
+            --input-border: rgba(255, 255, 255, 0.2);
+            --success-color: #4CAF50;
+            --error-color: #f44336;
+            --info-color: #2196F3;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, var(--bg-color-start), var(--bg-color-mid), var(--bg-color-end));
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+            color: var(--text-light);
+            min-height: 100vh;
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* Language switcher and other fixed elements */
+        .language-switcher, .home-link, .login-link {
+            position: fixed;
+            background-color: var(--language-bg);
+            backdrop-filter: blur(5px);
+            padding: 10px 15px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px var(--shadow-light);
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+        .language-switcher {
+            top: 20px;
+            left: 20px;
+            transform: translateY(250px);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .home-link, .login-link {
+            top: 20px;
+            right: 20px;
+            font-weight: 500;
+        }
+        html[dir="rtl"] .language-switcher {
+            left: auto;
+            right: 20px;
+        }
+        html[dir="rtl"] .home-link, html[dir="rtl"] .login-link {
+            right: auto;
+            left: 20px;
+        }
+
+        /* Stripe Element styles */
+        #card-element {
+            background: var(--input-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--input-border);
+            margin-bottom: 20px;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .StripeElement--focus {
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 2px var(--accent-color);
+        }
+        #card-errors {
+            color: var(--error-color);
+            margin-top: -10px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+    <a href="{{ url_for('index') }}" class="home-link text-white hover:text-[var(--accent-color)] flex items-center gap-2">
+        <i class="fas fa-home"></i>
+        <span>Home</span>
+    </a>
+
+    <div class="language-switcher">
+        <i class="fas fa-globe text-[var(--accent-color)]"></i>
+        <select id="langSelect" class="bg-transparent text-white font-medium outline-none">
+            <option value="en" class="bg-[var(--card-bg)]">English</option>
+            <option value="ar" class="bg-[var(--card-bg)]">العربية</option>
+            <option value="es" class="bg-[var(--card-bg)]">Español</option>
+        </select>
+    </div>
+
+    <div class="text-center mb-8">
+        <h1 class="text-4xl md:text-5xl font-bold text-[var(--text-light)] mb-4" data-translate="pageTitle">
+            Choose Your Plan
+        </h1>
+        <p class="text-xl text-[var(--text-muted)]" data-translate="subHeading">
+            Unlock all features with a subscription.
+        </p>
+    </div>
+
+    <div class="flex flex-col md:flex-row gap-8 w-full max-w-4xl px-4">
+        <div id="monthly-plan" class="plan-card flex-1 bg-[var(--card-bg)] backdrop-blur-md p-8 rounded-xl shadow-2xl border border-gray-700 text-center transform hover:scale-105 transition-transform duration-300">
+            <h2 class="text-3xl font-bold mb-2 text-[var(--accent-color)]" data-translate="monthlyTitle">Monthly Plan</h2>
+            <p class="text-5xl font-extrabold my-4">
+                <span class="text-[var(--text-light)]">$8</span>
+                <span class="text-xl text-[var(--text-muted)]">/month</span>
+            </p>
+            <ul class="text-left text-[var(--text-muted)] space-y-3 mb-8">
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="monthlyFeature1">Full access to all features</span>
+                </li>
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="monthlyFeature2">Unlimited projects</span>
+                </li>
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="monthlyFeature3">Priority support</span>
+                </li>
+            </ul>
+            <button class="w-full bg-[var(--accent-color)] text-[var(--btn-text)] font-bold py-3 rounded-lg shadow-lg hover:bg-[var(--accent-hover)] transition-colors duration-300 transform hover:-translate-y-1 plan-button" data-plan="monthly">
+                <i class="fas fa-credit-card mr-2"></i>
+                <span data-translate="selectMonthly">Select Monthly Plan</span>
+            </button>
+        </div>
+
+        <div id="yearly-plan" class="plan-card flex-1 bg-[var(--card-bg)] backdrop-blur-md p-8 rounded-xl shadow-2xl border border-gray-700 text-center transform hover:scale-105 transition-transform duration-300 relative overflow-hidden">
+            <div class="absolute top-0 right-0 bg-yellow-400 text-gray-900 font-bold px-4 py-1 text-xs rounded-bl-lg">
+                <span data-translate="bestValue">Best Value!</span>
+            </div>
+            <h2 class="text-3xl font-bold mb-2 text-[var(--accent-color)]" data-translate="yearlyTitle">Yearly Plan</h2>
+            <p class="text-5xl font-extrabold my-4">
+                <span class="text-[var(--text-light)]">$45</span>
+                <span class="text-xl text-[var(--text-muted)]">/year</span>
+            </p>
+            <ul class="text-left text-[var(--text-muted)] space-y-3 mb-8">
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="yearlyFeature1">Full access to all features</span>
+                </li>
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="yearlyFeature2">Unlimited projects</span>
+                </li>
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="yearlyFeature3">Priority support</span>
+                </li>
+                <li class="flex items-center gap-3">
+                    <i class="fas fa-check-circle text-green-400"></i>
+                    <span data-translate="yearlyFeature4">Save 50% vs. monthly</span>
+                </li>
+            </ul>
+            <button class="w-full bg-[var(--accent-color)] text-[var(--btn-text)] font-bold py-3 rounded-lg shadow-lg hover:bg-[var(--accent-hover)] transition-colors duration-300 transform hover:-translate-y-1 plan-button" data-plan="yearly">
+                <i class="fas fa-credit-card mr-2"></i>
+                <span data-translate="selectYearly">Select Yearly Plan</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="messageModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[9999] hidden">
+        <div class="modal-content bg-[var(--card-bg)] backdrop-blur-md p-8 rounded-xl shadow-2xl border border-gray-700 w-11/12 max-w-sm text-center transform scale-95 transition-transform duration-300">
+            <h3 id="modalTitle" class="text-2xl font-bold mb-4"></h3>
+            <p id="modalMessage" class="text-[var(--text-muted)] mb-6"></p>
+            <button id="modalCloseButton" class="bg-[var(--accent-color)] text-[var(--btn-text)] font-bold py-2 px-6 rounded-lg hover:bg-[var(--accent-hover)]">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <div id="paymentModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[9999] hidden">
+        <div class="modal-content bg-[var(--card-bg)] backdrop-blur-md p-8 rounded-xl shadow-2xl border border-gray-700 w-11/12 max-w-sm text-center transform scale-95 transition-transform duration-300">
+            <h3 class="text-2xl font-bold mb-4 text-[var(--text-light)]">Enter Payment Details</h3>
+            <p id="payment-amount" class="text-xl mb-4 text-[var(--text-muted)]"></p>
+            <form id="payment-form">
+                <div id="card-element" class="mb-4">
+                    </div>
+                <div id="card-errors" role="alert" class="text-[var(--error-color)] text-sm mb-4"></div>
+                <button id="submit-button" class="w-full bg-[var(--accent-color)] text-[var(--btn-text)] font-bold py-3 rounded-lg shadow-lg hover:bg-[var(--accent-hover)] transition-colors duration-300">
+                    <span data-translate="payNow">Pay Now</span>
+                </button>
+            </form>
+            <button id="close-payment-modal" class="mt-4 text-[var(--text-muted)] hover:text-[var(--accent-color)]">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        // Language translations object
+        const translations = {
+            en: {
+                pageTitle: "Choose Your Plan",
+                subHeading: "Unlock all features with a subscription.",
+                monthlyTitle: "Monthly Plan",
+                monthlyFeature1: "Full access to all features",
+                monthlyFeature2: "Unlimited projects",
+                monthlyFeature3: "Priority support",
+                selectMonthly: "Select Monthly Plan",
+                yearlyTitle: "Yearly Plan",
+                yearlyFeature1: "Full access to all features",
+                yearlyFeature2: "Unlimited projects",
+                yearlyFeature3: "Priority support",
+                yearlyFeature4: "Save 50% vs. monthly",
+                selectYearly: "Select Yearly Plan",
+                bestValue: "Best Value!",
+                payNow: "Pay Now"
+            },
+            ar: {
+                pageTitle: "اختر خطتك",
+                subHeading: "افتح جميع الميزات باشتراك.",
+                monthlyTitle: "الخطة الشهرية",
+                monthlyFeature1: "وصول كامل لجميع الميزات",
+                monthlyFeature2: "مشاريع غير محدودة",
+                monthlyFeature3: "دعم ذو أولوية",
+                selectMonthly: "اختر الخطة الشهرية",
+                yearlyTitle: "الخطة السنوية",
+                yearlyFeature1: "وصول كامل لجميع الميزات",
+                yearlyFeature2: "مشاريع غير محدودة",
+                yearlyFeature3: "دعم ذو أولوية",
+                yearlyFeature4: "وفر 50% مقارنة بالخطة الشهرية",
+                selectYearly: "اختر الخطة السنوية",
+                bestValue: "أفضل قيمة!",
+                payNow: "ادفع الآن"
+            },
+            es: {
+                pageTitle: "Elige tu plan",
+                subHeading: "Desbloquea todas las funciones con una suscripción.",
+                monthlyTitle: "Plan Mensual",
+                monthlyFeature1: "Acceso completo a todas las funciones",
+                monthlyFeature2: "Proyectos ilimitados",
+                monthlyFeature3: "Soporte prioritario",
+                selectMonthly: "Seleccionar Plan Mensual",
+                yearlyTitle: "Plan Anual",
+                yearlyFeature1: "Acceso completo a todas las funciones",
+                yearlyFeature2: "Proyectos ilimitados",
+                yearlyFeature3: "Soporte prioritario",
+                yearlyFeature4: "Ahorra 50% vs. mensual",
+                selectYearly: "Seleccionar Plan Anual",
+                bestValue: "¡Mejor valor!",
+                payNow: "Pagar ahora"
+            },
+        };
+
+        // Initialize Stripe
+        const stripe = Stripe('pk_test_51PbmF1RpJd0b16uB796yQ9oT0Xg9R7XfFwS8i9p2y1F8g0n0d1T0hTz8gD8K4N6F9Z8Yx7Y9kL9kL9A5I1gH5F8D8K4X4uA5Y9cE0e9V9W7Y00T0qT6Y4R'); // Replace with your actual Stripe publishable key
+
+        const elements = stripe.elements();
+        const cardElement = elements.create('card');
+
+        // Mount the card element to the DOM
+        const cardElementContainer = document.getElementById('card-element');
+        if (cardElementContainer) {
+            cardElement.mount(cardElementContainer);
+        }
+
+        const langSelect = document.getElementById('langSelect');
+        const paymentModal = document.getElementById('paymentModal');
+        const planButtons = document.querySelectorAll('.plan-button');
+        const paymentForm = document.getElementById('payment-form');
+        const closePaymentModalButton = document.getElementById('close-payment-modal');
+
+        // Function to show the custom alert modal
+        function customAlert(title, message, callback) {
+            const modal = document.getElementById('messageModal');
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalMessage').textContent = message;
+            modal.classList.remove('hidden');
+
+            const closeButton = document.getElementById('modalCloseButton');
+            closeButton.onclick = () => {
+                modal.classList.add('hidden');
+                if (callback) {
+                    callback();
+                }
+            };
+        }
+
+        // Language switching functions
+        function setLanguage(lang) {
+            const elements = document.querySelectorAll('[data-translate]');
+            elements.forEach(el => {
+                const key = el.getAttribute('data-translate');
+                if (translations[lang] && translations[lang][key]) {
+                    el.textContent = translations[lang][key];
+                }
+            });
+
+            if (translations[lang] && translations[lang].pageTitle) {
+                 document.title = translations[lang].pageTitle;
+            }
+
+            const htmlTag = document.documentElement;
+            htmlTag.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+
+            localStorage.setItem('lang', lang);
+            langSelect.value = lang;
+        }
+
+        langSelect.addEventListener('change', (event) => {
+            setLanguage(event.target.value);
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedLang = localStorage.getItem('lang') || 'en';
+            setLanguage(savedLang);
+        });
+
+        // Show the payment modal when a plan button is clicked
+        planButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const plan = button.dataset.plan;
+                let amount;
+                if (plan === 'monthly') {
+                    amount = '$8/month';
+                } else if (plan === 'yearly') {
+                    amount = '$45/year';
+                }
+                document.getElementById('payment-amount').textContent = `Total: ${amount}`;
+                paymentModal.classList.remove('hidden');
+            });
+        });
+
+        // Handle the payment form submission
+        paymentForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const { paymentMethod, error } = await stripe.createPaymentMethod({
+                type: 'card',
+                card: cardElement,
+            });
+
+            if (error) {
+                // Display error to the user
+                document.getElementById('card-errors').textContent = error.message;
+            } else {
+                // Send the paymentMethod.id to your server for processing
+                const response = await fetch('/create-payment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paymentMethodId: paymentMethod.id, plan: 'monthly' }), // You would need to determine the selected plan here dynamically
+                });
+
+                const serverResponse = await response.json();
+                if (serverResponse.success) {
+                    customAlert('Payment Successful', serverResponse.message, () => {
+                        window.location.href = '/profile'; // Redirect to profile page on success
+                    });
+                } else {
+                    customAlert('Payment Failed', serverResponse.message);
+                }
+                paymentModal.classList.add('hidden');
+            }
+        });
+
+        // Close the payment modal
+        closePaymentModalButton.addEventListener('click', () => {
+            paymentModal.classList.add('hidden');
+            cardElement.clear();
+        });
+    </script>
+</body>
+</html>
