@@ -41,6 +41,7 @@ db = SQLAlchemy(app)
 
 # Stripe configuration
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 STRIPE_MONTHLY_PLAN_ID = os.environ.get("STRIPE_MONTHLY_PLAN_ID")
 STRIPE_ANNUAL_PLAN_ID = os.environ.get("STRIPE_ANNUAL_PLAN_ID")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
@@ -92,7 +93,14 @@ def home():
 
 @app.route("/pricing")
 def pricing():
-    return render_template("pricing.html", title="Pricing")
+    # Pass all necessary Stripe keys to the pricing template.
+    return render_template(
+        "pricing.html",
+        title="Pricing",
+        stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
+        monthly_plan_id=STRIPE_MONTHLY_PLAN_ID,
+        annual_plan_id=STRIPE_ANNUAL_PLAN_ID
+    )
 
 
 @app.route("/profile")
@@ -291,4 +299,3 @@ if __name__ == "__main__":
         # This will create all database tables in your Neon PostgreSQL database
         db.create_all()
     app.run(debug=True)
-
