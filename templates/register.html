@@ -1,5 +1,6 @@
 <!-- templates/register.html -->
 {% extends "base.html" %}
+
 {% block content %}
 <div class="flex items-center justify-center min-h-screen -mt-16">
     <div class="bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8 md:p-10 w-full max-w-md">
@@ -19,6 +20,21 @@
                 Register
             </button>
         </form>
+
+        <div class="flex items-center my-6">
+            <div class="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+            <span class="flex-shrink mx-4 text-gray-500 dark:text-gray-400">OR</span>
+            <div class="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+        </div>
+
+        <a href="{{ url_for('login_google') }}" class="w-full flex items-center justify-center px-4 py-3 bg-red-600 text-white rounded-lg font-bold text-lg hover:bg-red-700 transition-colors duration-300">
+            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M24 9.5c3.35 0 6.43 1.35 8.68 3.52l6.23-6.23C34.62 3.86 29.58 2 24 2 15.65 2 8.2 6.72 4.41 14.1l6.9 5.33C13.25 14.93 18.23 11.5 24 11.5c4.1 0 7.7 1.25 10.23 3.3l6.27-6.27c-3.1-2.92-7.3-4.73-11.5-4.73zm0 25c-5.77 0-10.75-3.43-13.78-8.41l-6.9 5.33C8.2 39.28 15.65 44 24 44c5.58 0 10.62-1.86 14.29-5.11l-6.23-6.23c-2.25 2.17-5.33 3.52-8.68 3.52z"/>
+                <path d="M43.61 20.4l-1.92-1.39C38.3 17.5 32.66 16 24 16c-4.1 0-7.7 1.25-10.23 3.3l-6.27-6.27C13.38 8.86 18.42 7 24 7c5.58 0 10.62 1.86 14.29 5.11l6.32-6.32c-3.1-2.92-7.3-4.73-11.5-4.73C15.65 2 8.2 6.72 4.41 14.1l6.9 5.33C13.25 14.93 18.23 11.5 24 11.5c4.1 0 7.7 1.25 10.23 3.3l6.27-6.27c-3.1-2.92-7.3-4.73-11.5-4.73zm-4.32 1.83l-1.92 1.39c-.58.43-1.07.96-1.46 1.57-1.14 1.8-1.73 3.84-1.73 6.07 0 2.23.59 4.27 1.73 6.07.39.61.88 1.14 1.46 1.57l1.92 1.39c.65.47 1.36.87 2.11 1.19l1.92 1.39c.75.32 1.55.5 2.39.5s1.64-.18 2.39-.5l1.92-1.39c.75-.32 1.46-.72 2.11-1.19l1.92-1.39c.58-.43 1.07-.96 1.46-1.57 1.14-1.8 1.73-3.84 1.73-6.07 0-2.23-.59-4.27-1.73-6.07-.39-.61-.88-1.14-1.46-1.57l-1.92-1.39c-.65-.47-1.36-.87-2.11-1.19l-1.92-1.39c-.75-.32-1.55-.5-2.39-.5s-1.64.18-2.39.5z" opacity=".2"/>
+            </svg>
+            Continue with Google
+        </a>
+
         <p class="mt-6 text-center text-gray-500 dark:text-gray-400">
             Already have an account? <a href="{{ url_for('login') }}" class="text-indigo-600 hover:underline">Login here</a>.
         </p>
