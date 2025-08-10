@@ -1,3 +1,4 @@
+# app.py
 import os
 import secrets
 import stripe
@@ -74,6 +75,8 @@ class User(db.Model, UserMixin):
     password = db.Column(db.String(60), nullable=True)
     google_id = db.Column(db.String(120), unique=True, nullable=True)
     subscription_status = db.Column(db.String(20), nullable=False, default="Free")
+    # New column to store the Stripe Customer ID
+    stripe_customer_id = db.Column(db.String(120), unique=True, nullable=True)
 
     def __repr__(self):
         return f"User('{self.email}', '{self.subscription_status}')"
@@ -222,11 +225,16 @@ def create_checkout_session():
     try:
         price_id = request.form.get("price_id")
 
-        # Create a new customer if they don't have a Stripe customer ID
-        # This is a simplification; in a real app, you would store this ID
-        customer_id = stripe.Customer.create(
-            email=current_user.email,
-        ).id
+        # Check if the user already has a Stripe customer ID
+        if not current_user.stripe_customer_id:
+            # Create a new customer if one does not exist and save the ID
+            customer = stripe.Customer.create(
+                email=current_user.email,
+            )
+            current_user.stripe_customer_id = customer.id
+            db.session.commit()
+
+        customer_id = current_user.stripe_customer_id
 
         checkout_session = stripe.checkout.Session.create(
             line_items=[
@@ -282,6 +290,9 @@ def stripe_webhook():
         if user_id:
             user = User.query.get(int(user_id))
             if user:
+                # Save the Stripe customer ID from the session to the user's record
+                user.stripe_customer_id = session.customer
+
                 if price_id == STRIPE_MONTHLY_PLAN_ID:
                     user.subscription_status = "Monthly"
                 elif price_id == STRIPE_ANNUAL_PLAN_ID:
@@ -294,8 +305,36 @@ def stripe_webhook():
     return "", 200
 
 
+# New route to create a session for the Stripe Customer Portal
+@app.route('/create-customer-portal-session', methods=['POST'])
+@login_required
+def create_customer_portal_session():
+    """Creates a Stripe Customer Portal session for the current user."""
+    try:
+        # Get the customer ID from the user's record
+        customer_id = current_user.stripe_customer_id
+
+        if not customer_id:
+            flash("No Stripe customer ID found. Please try purchasing a plan first.", "danger")
+            return jsonify({'error': 'No customer ID'}), 400
+
+        # Create a session to redirect the user to the Customer Portal
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=url_for('profile', _external=True)
+        )
+
+        # Redirect the user to the Customer Portal URL
+        return jsonify({'url': session.url})
+
+    except stripe.error.StripeError as e:
+        flash(f"Error creating customer portal session: {e}", "error")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == "__main__":
     with app.app_context():
         # This will create all database tables in your Neon PostgreSQL database
         db.create_all()
     app.run(debug=True)
+

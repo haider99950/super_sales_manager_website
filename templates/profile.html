@@ -25,6 +25,7 @@
                 </span>
                 {% endif %}
             </div>
+
             {% if current_user.subscription_status == 'Free' %}
             <p class="text-center text-gray-500 dark:text-gray-400 mt-6">
                 You currently have the free plan. Upgrade to unlock all features.
@@ -32,8 +33,47 @@
             <a href="{{ url_for('pricing') }}" class="w-full inline-block text-center px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold text-lg hover:bg-indigo-700 transition-colors duration-300">
                 Upgrade Now
             </a>
+            {% else %}
+            <p class="text-center text-gray-500 dark:text-gray-400 mt-6">
+                You have an active subscription. Manage your billing details or change your plan below.
+            </p>
+            <button id="manage-subscription-btn" class="w-full inline-block text-center px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold text-lg hover:bg-indigo-700 transition-colors duration-300">
+                Manage Subscription
+            </button>
             {% endif %}
         </div>
     </div>
 </div>
+
+<script>
+    // Get the button element
+    const manageButton = document.getElementById('manage-subscription-btn');
+
+    // Add a click event listener
+    if (manageButton) {
+        manageButton.addEventListener('click', async function() {
+            try {
+                // Call the Flask route to create the portal session
+                const response = await fetch("{{ url_for('create_customer_portal_session') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                });
+
+                const data = await response.json();
+                if (data.url) {
+                    // Redirect to the Stripe Customer Portal
+                    window.location.href = data.url;
+                } else {
+                    console.error('Error:', data.error);
+                    alert("An error occurred. Please try again.");
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                alert("An error occurred. Please try again.");
+            }
+        });
+    }
+</script>
 {% endblock %}
