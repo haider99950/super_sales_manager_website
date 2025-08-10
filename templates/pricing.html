@@ -3,18 +3,6 @@
 {% block content %}
 <div class="flex items-center justify-center min-h-screen">
     <div class="w-full max-w-4xl p-8 md:p-10 text-center">
-        {% if current_user.subscription_status != 'Free' %}
-        <div class="bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8 md:p-10 w-full max-w-lg mx-auto">
-            <h2 class="text-3xl font-bold text-center text-gray-900 dark:text-white mb-4">You're Already Subscribed!</h2>
-            <p class="text-center text-gray-500 dark:text-gray-400 mb-6">
-                You have an active {{ current_user.subscription_status }} subscription.
-                You can manage your plan or cancel it from your profile page.
-            </p>
-            <a href="{{ url_for('profile') }}" class="w-full inline-block text-center px-6 py-3 bg-indigo-600 text-white rounded-lg font-bold text-lg hover:bg-indigo-700 transition-colors duration-300">
-                Go to Profile
-            </a>
-        </div>
-        {% else %}
         <h2 class="text-5xl font-extrabold text-gray-900 dark:text-white mb-6">Pricing Plans</h2>
         <p class="text-xl text-gray-600 dark:text-gray-400 mb-12">
             Choose the plan that's right for you to unlock all features.
@@ -45,7 +33,7 @@
                     <h3 class="text-3xl font-extrabold text-gray-900 dark:text-white">Annual</h3>
                     <p class="mt-4 text-gray-600 dark:text-gray-400 text-lg">Save money with a yearly subscription</p>
                     <div class="mt-6">
-                        <span class="text-5xl font-extrabold text-gray-900 dark:text-white">$80</span>
+                        <span class="text-5xl font-extrabold text-gray-900 dark:text-white">$45</span>
                         <span class="text-lg font-medium text-gray-500 dark:text-gray-300">/yr</span>
                     </div>
                     <form id="checkout-form-annual" class="mt-8">
@@ -57,7 +45,6 @@
                 </div>
             </div>
         </div>
-        {% endif %}
     </div>
 </div>
 
@@ -65,42 +52,48 @@
 <script>
     const stripe = Stripe("{{ stripe_publishable_key }}");
 
-    // Monthly Plan Form
-    const monthlyForm = document.getElementById("checkout-form-monthly");
-    if (monthlyForm) {
-        monthlyForm.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const priceId = e.target.price_id.value;
-            const { sessionId } = await fetch("/create-checkout-session", {
+    // Function to handle form submissions
+    async function handleCheckout(event) {
+        event.preventDefault();
+        const priceId = event.target.querySelector('input[name="price_id"]').value;
+
+        try {
+            const response = await fetch("/create-checkout-session", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `price_id=${priceId}`,
-            }).then((res) => res.json());
+            });
 
-            const { error } = await stripe.redirectToCheckout({ sessionId });
-            if (error) {
-                console.error("Stripe Checkout error:", error);
+            // Check if the server redirected the user (e.g., to the login page)
+            if (response.redirected) {
+                window.location.href = response.url;
+                return;
             }
-        });
+
+            const data = await response.json();
+
+            if (data.id) {
+                const { error } = await stripe.redirectToCheckout({ sessionId: data.id });
+                if (error) {
+                    console.error("Stripe Checkout error:", error);
+                }
+            } else if (data.error) {
+                console.error("Backend error:", data.error);
+            }
+        } catch (error) {
+            console.error("Fetch error:", error);
+        }
     }
 
-    // Annual Plan Form
+    // Attach event listeners to both forms
+    const monthlyForm = document.getElementById("checkout-form-monthly");
+    if (monthlyForm) {
+        monthlyForm.addEventListener("submit", handleCheckout);
+    }
+
     const annualForm = document.getElementById("checkout-form-annual");
     if (annualForm) {
-        annualForm.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const priceId = e.target.price_id.value;
-            const { sessionId } = await fetch("/create-checkout-session", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `price_id=${priceId}`,
-            }).then((res) => res.json());
-
-            const { error } = await stripe.redirectToCheckout({ sessionId });
-            if (error) {
-                console.error("Stripe Checkout error:", error);
-            }
-        });
+        annualForm.addEventListener("submit", handleCheckout);
     }
 </script>
 {% endblock %}

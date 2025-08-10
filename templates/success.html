@@ -1,0 +1,102 @@
+<!-- templates/success.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div id="status-container" class="bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8 md:p-10 w-full max-w-md text-center border border-gray-200 dark:border-gray-700">
+        <h2 class="text-3xl font-bold text-gray-900 dark:text-white mb-4">Subscription Successful!</h2>
+        <p class="text-gray-600 dark:text-gray-400 mb-6">
+            We're processing your subscription. Please wait while we update your account.
+        </p>
+        <div class="loader-wrapper mx-auto mb-6">
+            <div id="loader-spinner" class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
+        </div>
+        <p id="status-message" class="text-sm text-gray-500 dark:text-gray-400">Your account is being updated...</p>
+    </div>
+</div>
+
+<style>
+    .loader {
+        border-top-color: #4f46e5;
+        animation: spinner 1.5s linear infinite;
+    }
+
+    @keyframes spinner {
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+</style>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const statusContainer = document.getElementById("status-container");
+        const statusMessage = document.getElementById("status-message");
+        const loaderSpinner = document.getElementById("loader-spinner");
+        const statusUrl = "{{ url_for('get_subscription_status') }}";
+        const profileUrl = "{{ url_for('profile') }}";
+
+        let retryCount = 0;
+        const maxRetries = 5;
+        let retryDelay = 2000; // Start with a 2-second delay
+
+        const checkStatus = async () => {
+            try {
+                const response = await fetch(statusUrl);
+                const data = await response.json();
+
+                if (data.status !== 'Free') {
+                    // Subscription has been updated, redirect to profile
+                    statusMessage.textContent = "Success! Redirecting you now...";
+                    loaderSpinner.classList.remove('loader');
+                    loaderSpinner.classList.add('border-green-500');
+                    // Give a moment for the user to see the success message before redirecting
+                    setTimeout(() => {
+                        window.location.href = profileUrl;
+                    }, 1500);
+                } else {
+                    // Subscription is still 'Free', poll again
+                    console.log("Status is still free. Retrying in " + retryDelay / 1000 + " seconds...");
+                    retryCount++;
+                    if (retryCount < maxRetries) {
+                        // Use exponential backoff for retries
+                        retryDelay *= 1.5;
+                        setTimeout(checkStatus, retryDelay);
+                    } else {
+                        // Max retries reached, display an error message
+                        statusMessage.innerHTML = `
+                            <p class="text-red-500">Something went wrong. The update took too long.</p>
+                            <p>You can try refreshing or clicking the button below.</p>
+                            <a href="${profileUrl}" class="btn bg-indigo-600 text-white hover:bg-indigo-700 mt-4 px-4 py-2 rounded-lg">Go to Profile</a>
+                        `;
+                        loaderSpinner.classList.remove('loader');
+                        loaderSpinner.classList.add('hidden'); // Hide the spinner on failure
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching subscription status:", error);
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    retryDelay *= 1.5;
+                    statusMessage.textContent = `Error connecting to the server. Retrying... (${retryCount}/${maxRetries})`;
+                    setTimeout(checkStatus, retryDelay);
+                } else {
+                    statusMessage.innerHTML = `
+                        <p class="text-red-500">Failed to connect to the server. Please check your connection.</p>
+                        <p>You can try refreshing or clicking the button below.</p>
+                        <a href="${profileUrl}" class="btn bg-indigo-600 text-white hover:bg-indigo-700 mt-4 px-4 py-2 rounded-lg">Go to Profile</a>
+                    `;
+                    loaderSpinner.classList.remove('loader');
+                    loaderSpinner.classList.add('hidden');
+                }
+            }
+        };
+
+        // Start the polling process
+        checkStatus();
+    });
+</script>
+{% endblock %}

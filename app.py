@@ -1,7 +1,8 @@
-# app.py
+# C:\Users\Administrator\PycharmProjects\app_download_website\app.py
 import os
 import secrets
 import stripe
+import json  # Import json for webhook payload parsing
 from urllib.parse import urljoin
 
 from flask import (
@@ -33,7 +34,6 @@ load_dotenv()
 # --- App Initialization and Configuration ---
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
-app.config["STRIPE_PUBLIC_KEY"] = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 
 # Configure the database to use the DATABASE_URL environment variable exclusively
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
@@ -77,6 +77,7 @@ class User(db.Model, UserMixin):
     subscription_status = db.Column(db.String(20), nullable=False, default="Free")
     # New column to store the Stripe Customer ID
     stripe_customer_id = db.Column(db.String(120), unique=True, nullable=True)
+    stripe_subscription_id = db.Column(db.String(120), unique=True, nullable=True)
 
     def __repr__(self):
         return f"User('{self.email}', '{self.subscription_status}')"
@@ -85,7 +86,7 @@ class User(db.Model, UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     """Loads a user from the database by ID."""
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 
 # --- Routes ---
@@ -95,7 +96,7 @@ def home():
 
 
 @app.route("/pricing")
-@login_required  # Added this to check user status
+@login_required
 def pricing():
     # Pass all necessary Stripe keys to the pricing template.
     return render_template(
@@ -110,7 +111,9 @@ def pricing():
 @app.route("/profile")
 @login_required
 def profile():
-    return render_template("profile.html", title="Profile")
+    # To ensure the latest subscription status is shown, refresh the user object
+    db.session.refresh(current_user)
+    return render_template("profile.html", title="Profile", user=current_user)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -233,7 +236,7 @@ def create_checkout_session():
                 email=current_user.email,
             )
             current_user.stripe_customer_id = customer.id
-            db.session.commit()
+            db.session.commit()  # Save the new customer ID to the database
 
         customer_id = current_user.stripe_customer_id
 
@@ -252,13 +255,26 @@ def create_checkout_session():
         )
         return jsonify({"id": checkout_session.id})
     except Exception as e:
+        # Log the error for debugging
+        print(f"Error creating checkout session: {e}")
         return jsonify(error=str(e)), 403
 
 
 @app.route("/success")
+@login_required
 def success():
-    flash("Subscription was successful! Check your profile for details.", "success")
-    return redirect(url_for("profile"))
+    # Render the success page, which will poll for the subscription status update.
+    flash("Subscription was successful! We're updating your account now.", "success")
+    return render_template("success.html", title="Success")
+
+
+@app.route("/get-subscription-status")
+@login_required
+def get_subscription_status():
+    """Endpoint for polling the user's subscription status."""
+    # This is a critical line to ensure we get the latest data from the database
+    db.session.refresh(current_user)
+    return jsonify({"status": current_user.subscription_status})
 
 
 @app.route("/cancel")
@@ -279,34 +295,72 @@ def stripe_webhook():
             payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
     except ValueError as e:
+        print(f"Webhook Error: Invalid payload: {e}")
         return "Invalid payload", 400
     except stripe.error.SignatureVerificationError as e:
+        print(f"Webhook Error: Invalid signature: {e}")
         return "Invalid signature", 400
 
+    # Handle the event based on its type
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         user_id = session.get("metadata", {}).get("user_id")
-
-        # Correctly get the price_id from the session object
-        price_id = session.get("line_items", {}).get("data", [{}])[0].get("price", {}).get("id")
+        customer_id = session.get("customer")
+        subscription_id = session.get("subscription")
 
         if user_id:
             user = User.query.get(int(user_id))
             if user:
-                # Update the subscription status based on the price_id
-                if price_id == STRIPE_MONTHLY_PLAN_ID:
-                    user.subscription_status = "Monthly"
-                elif price_id == STRIPE_ANNUAL_PLAN_ID:
-                    user.subscription_status = "Annually"
-                else:
-                    # Should not happen in this flow, but good to have a default
-                    user.subscription_status = "Free"
+                # Update the user's Stripe IDs
+                user.stripe_customer_id = customer_id
+                user.stripe_subscription_id = subscription_id
 
-                # IMPORTANT: We need to also retrieve and save the Stripe customer ID
-                user.stripe_customer_id = session.get('customer')
+                # Get the subscription status from the session and update the user
+                if subscription_id:
+                    subscription = stripe.Subscription.retrieve(subscription_id)
+                    price_id = subscription['items']['data'][0]['price']['id']
+
+                    if price_id == STRIPE_MONTHLY_PLAN_ID:
+                        user.subscription_status = "Monthly"
+                    elif price_id == STRIPE_ANNUAL_PLAN_ID:
+                        user.subscription_status = "Annually"
+                    else:
+                        user.subscription_status = "Free"
 
                 db.session.commit()
-                print(f"Subscription for user {user.email} updated to {user.subscription_status}")
+                print(
+                    f"User {user.email} subscription status updated to {user.subscription_status} via checkout session.")
+
+    elif event["type"] == "customer.subscription.updated":
+        subscription_data = event['data']['object']
+        customer_id = subscription_data.get('customer')
+
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if user:
+            subscription_status = "Free"
+            if subscription_data['status'] == 'active':
+                price_id = subscription_data['items']['data'][0]['price']['id']
+                if price_id == STRIPE_MONTHLY_PLAN_ID:
+                    subscription_status = "Monthly"
+                elif price_id == STRIPE_ANNUAL_PLAN_ID:
+                    subscription_status = "Annually"
+            else:
+                # The subscription is not active, set it to Free
+                subscription_status = "Free"
+
+            user.subscription_status = subscription_status
+            db.session.commit()
+            print(f"Subscription for user {user.email} updated to {user.subscription_status}")
+
+    elif event["type"] == "customer.subscription.deleted":
+        subscription_data = event['data']['object']
+        customer_id = subscription_data.get('customer')
+
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if user:
+            user.subscription_status = "Free"
+            db.session.commit()
+            print(f"Subscription for user {user.email} was deleted. Status set to Free.")
 
     return "", 200
 
@@ -317,24 +371,26 @@ def stripe_webhook():
 def create_customer_portal_session():
     """Creates a Stripe Customer Portal session for the current user."""
     try:
-        # Get the customer ID from the user's record
         customer_id = current_user.stripe_customer_id
 
         if not customer_id:
-            flash("No Stripe customer ID found. Please try purchasing a plan first.", "danger")
-            return jsonify({'error': 'No customer ID'}), 400
+            # If for some reason the customer ID is missing, create one.
+            customer = stripe.Customer.create(
+                email=current_user.email,
+            )
+            current_user.stripe_customer_id = customer.id
+            db.session.commit()
+            customer_id = customer.id
 
-        # Create a session to redirect the user to the Customer Portal
         session = stripe.billing_portal.Session.create(
             customer=customer_id,
             return_url=url_for('profile', _external=True)
         )
 
-        # Redirect the user to the Customer Portal URL
         return jsonify({'url': session.url})
 
     except stripe.error.StripeError as e:
-        flash(f"Error creating customer portal session: {e}", "error")
+        print(f"Error creating customer portal session: {e}")
         return jsonify({'error': str(e)}), 500
 
 

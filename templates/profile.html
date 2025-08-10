@@ -1,14 +1,18 @@
 <!-- templates/profile.html -->
 {% extends "base.html" %}
+
 {% block content %}
-<div class="flex items-center justify-center min-h-screen -mt-16">
-    <div class="bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8 md:p-10 w-full max-w-md">
+<div class="flex items-center justify-center min-h-screen -mt-16 bg-gray-50 dark:bg-gray-900">
+    <div class="bg-white dark:bg-gray-800 shadow-xl rounded-2xl p-8 md:p-10 w-full max-w-md border border-gray-200 dark:border-gray-700">
         <h2 class="text-3xl font-bold text-center text-gray-900 dark:text-white mb-6">Your Profile</h2>
         <div class="space-y-4">
+            <!-- Email display -->
             <div class="flex items-center justify-between p-4 bg-gray-100 dark:bg-gray-700 rounded-lg">
                 <span class="text-gray-700 dark:text-gray-300 font-medium">Email:</span>
                 <span class="text-gray-900 dark:text-white font-semibold">{{ current_user.email }}</span>
             </div>
+
+            <!-- Subscription Status display with color-coded badges -->
             <div class="flex items-center justify-between p-4 bg-gray-100 dark:bg-gray-700 rounded-lg">
                 <span class="text-gray-700 dark:text-gray-300 font-medium">Subscription Status:</span>
                 {% if current_user.subscription_status == 'Free' %}
@@ -26,6 +30,7 @@
                 {% endif %}
             </div>
 
+            <!-- Dynamic content for Free users -->
             {% if current_user.subscription_status == 'Free' %}
             <p class="text-center text-gray-500 dark:text-gray-400 mt-6">
                 You currently have the free plan. Upgrade to unlock all features.
@@ -34,46 +39,64 @@
                 Upgrade Now
             </a>
             {% else %}
-            <p class="text-center text-gray-500 dark:text-gray-400 mt-6">
-                You have an active subscription. Manage your billing details or change your plan below.
-            </p>
-            <button id="manage-subscription-btn" class="w-full inline-block text-center px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold text-lg hover:bg-indigo-700 transition-colors duration-300">
-                Manage Subscription
+            <!-- Manage subscription button for paying users -->
+            <button id="manage-subscription-btn" class="w-full text-center px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold text-lg hover:bg-indigo-700 transition-colors duration-300 mt-6 flex items-center justify-center">
+                <span id="button-text">Manage Subscription</span>
+                <div id="loader-spinner" class="hidden ml-2 h-5 w-5 border-2 border-white border-t-indigo-200 rounded-full animate-spin"></div>
             </button>
+
+            <!-- Error message container -->
+            <div id="error-message" class="hidden text-center text-red-500 text-sm mt-2"></div>
             {% endif %}
         </div>
     </div>
 </div>
 
 <script>
-    // Get the button element
-    const manageButton = document.getElementById('manage-subscription-btn');
+    document.addEventListener("DOMContentLoaded", function() {
+        const manageSubscriptionBtn = document.getElementById('manage-subscription-btn');
+        const buttonText = document.getElementById('button-text');
+        const loaderSpinner = document.getElementById('loader-spinner');
+        const errorMessage = document.getElementById('error-message');
 
-    // Add a click event listener
-    if (manageButton) {
-        manageButton.addEventListener('click', async function() {
-            try {
-                // Call the Flask route to create the portal session
-                const response = await fetch("{{ url_for('create_customer_portal_session') }}", {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                });
+        if (manageSubscriptionBtn) {
+            manageSubscriptionBtn.addEventListener('click', async () => {
+                // Show loading state
+                buttonText.textContent = "Loading...";
+                loaderSpinner.classList.remove('hidden');
+                manageSubscriptionBtn.disabled = true;
+                errorMessage.classList.add('hidden');
 
-                const data = await response.json();
-                if (data.url) {
-                    // Redirect to the Stripe Customer Portal
-                    window.location.href = data.url;
-                } else {
-                    console.error('Error:', data.error);
-                    alert("An error occurred. Please try again.");
+                try {
+                    const response = await fetch('/create-customer-portal-session', { method: 'POST' });
+                    const data = await response.json();
+
+                    if (data.url) {
+                        window.location.href = data.url;
+                    } else {
+                        // Handle server-side errors
+                        console.error("Error creating customer portal session:", data.error);
+                        errorMessage.textContent = data.error || "Something went wrong. Please try again.";
+                        errorMessage.classList.remove('hidden');
+
+                        // Revert button state
+                        buttonText.textContent = "Manage Subscription";
+                        loaderSpinner.classList.add('hidden');
+                        manageSubscriptionBtn.disabled = false;
+                    }
+                } catch (error) {
+                    // Handle network or fetch errors
+                    console.error("Fetch error:", error);
+                    errorMessage.textContent = "Network error. Please check your connection and try again.";
+                    errorMessage.classList.remove('hidden');
+
+                    // Revert button state
+                    buttonText.textContent = "Manage Subscription";
+                    loaderSpinner.classList.add('hidden');
+                    manageSubscriptionBtn.disabled = false;
                 }
-            } catch (error) {
-                console.error('Fetch error:', error);
-                alert("An error occurred. Please try again.");
-            }
-        });
-    }
+            });
+        }
+    });
 </script>
 {% endblock %}
