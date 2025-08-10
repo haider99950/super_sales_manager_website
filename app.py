@@ -36,7 +36,8 @@ app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
 app.config["STRIPE_PUBLIC_KEY"] = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 
 # Configure the database
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+# Using os.environ.get() with a fallback for local development
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///site.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
