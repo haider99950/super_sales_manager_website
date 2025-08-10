@@ -95,6 +95,7 @@ def home():
 
 
 @app.route("/pricing")
+@login_required  # Added this to check user status
 def pricing():
     # Pass all necessary Stripe keys to the pricing template.
     return render_template(
@@ -227,7 +228,7 @@ def create_checkout_session():
 
         # Check if the user already has a Stripe customer ID
         if not current_user.stripe_customer_id:
-            # Create a new customer if one does not exist and save the ID
+            # Create a new customer if one does not exist
             customer = stripe.Customer.create(
                 email=current_user.email,
             )
@@ -285,20 +286,25 @@ def stripe_webhook():
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         user_id = session.get("metadata", {}).get("user_id")
+
+        # Correctly get the price_id from the session object
         price_id = session.get("line_items", {}).get("data", [{}])[0].get("price", {}).get("id")
 
         if user_id:
             user = User.query.get(int(user_id))
             if user:
-                # Save the Stripe customer ID from the session to the user's record
-                user.stripe_customer_id = session.customer
-
+                # Update the subscription status based on the price_id
                 if price_id == STRIPE_MONTHLY_PLAN_ID:
                     user.subscription_status = "Monthly"
                 elif price_id == STRIPE_ANNUAL_PLAN_ID:
                     user.subscription_status = "Annually"
                 else:
+                    # Should not happen in this flow, but good to have a default
                     user.subscription_status = "Free"
+
+                # IMPORTANT: We need to also retrieve and save the Stripe customer ID
+                user.stripe_customer_id = session.get('customer')
+
                 db.session.commit()
                 print(f"Subscription for user {user.email} updated to {user.subscription_status}")
 
@@ -337,4 +343,3 @@ if __name__ == "__main__":
         # This will create all database tables in your Neon PostgreSQL database
         db.create_all()
     app.run(debug=True)
-
