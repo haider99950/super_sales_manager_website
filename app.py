@@ -1,309 +1,320 @@
 # app.py
+import os
+import secrets
+from datetime import datetime, timedelta
+from urllib.parse import urljoin
+import stripe
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    session,
+    jsonify,
+)
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    login_user,
+    logout_user,
+    current_user,
+    login_required,
+)
+from flask_bcrypt import Bcrypt
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer
 from authlib.integrations.flask_client import OAuth
-import os
-import datetime
 from dotenv import load_dotenv
-import stripe
 
 # Load environment variables from the .env file
 load_dotenv()
 
-# --- Application Initialization ---
+# --- App Initialization and Configuration ---
 app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///site.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# A secret key is required for session management and token serialization.
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_strong_secret_key_123')
+# Flask-Mail configuration
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
+app.config["MAIL_PORT"] = 587
+app.config["MAIL_USE_TLS"] = True
+app.config["MAIL_USERNAME"] = os.environ.get("EMAIL_USER")
+app.config["MAIL_PASSWORD"] = os.environ.get("EMAIL_PASS")
+app.config["MAIL_DEFAULT_SENDER"] = os.environ.get("EMAIL_USER")
 
-# --- Database Configuration ---
-# Use an environment variable for the database URI for flexibility
-# This allows us to use a local SQLite DB for development and a PostgreSQL DB for production
-# This is a major change from your previous code to make the app work on Render
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///db.sqlite')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Stripe configuration
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_MONTHLY_PLAN_ID = "price_1Ovz0bT69G6FvJ7b5D6u9H2i" # Replace with your actual price IDs
+STRIPE_ANNUAL_PLAN_ID = "price_1Ovz0bT69G6FvJ7b5J6u8T2k" # Replace with your actual price IDs
+STRIPE_SUCCESS_URL = "http://localhost:5000/profile?session_id={CHECKOUT_SESSION_ID}"
+STRIPE_CANCEL_URL = "http://localhost:5000/pricing"
+
+# Google OAuth configuration
+app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID")
+app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET")
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # For local testing with http
+
 db = SQLAlchemy(app)
-
-
-# --- User Model ---
-# We are moving the User model directly into app.py to avoid the circular import.
-class User(db.Model):
-    __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    # password_hash is nullable for users who sign up via OAuth
-    password_hash = db.Column(db.String(128), nullable=True)
-    is_verified = db.Column(db.Boolean, default=False)
-    is_activated = db.Column(db.Boolean, default=False)  # New column for account activation status
-
-    def set_password(self, password):
-        """Hashes the password and sets the password_hash."""
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password):
-        """Checks if the provided password matches the stored hash."""
-        return check_password_hash(self.password_hash, password)
-
-    def __repr__(self):
-        return f'<User {self.email}>'
-
-
-# --- Flask-Mail Configuration ---
-app.config['MAIL_SERVER'] = 'smtp.googlemail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.environ.get('EMAIL_USER')
-app.config['MAIL_PASSWORD'] = os.environ.get('EMAIL_PASS')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('EMAIL_USER')
+bcrypt = Bcrypt(app)
 mail = Mail(app)
-s = URLSafeTimedSerializer(app.secret_key)
-
-# --- Stripe Configuration ---
-stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
-
-# --- OAuth Configuration ---
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message_category = "info"
+s = URLSafeTimedSerializer(app.config["SECRET_KEY"])
 oauth = OAuth(app)
+
 oauth.register(
-    name='google',
-    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-    access_token_url='https://accounts.google.com/o/oauth2/token',
+    name="google",
+    client_id=app.config["GOOGLE_CLIENT_ID"],
+    client_secret=app.config["GOOGLE_CLIENT_SECRET"],
+    access_token_url="https://oauth2.googleapis.com/token",
     access_token_params=None,
-    authorize_url='https://accounts.google.com/o/oauth2/auth',
+    authorize_url="https://accounts.google.com/o/oauth2/auth",
     authorize_params=None,
-    api_base_url='https://www.googleapis.com/oauth2/v1/',
-    client_kwargs={'scope': 'openid profile email'},
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration'
+    api_base_url="https://www.googleapis.com/oauth2/v1/",
+    userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
 )
 
 
-# A custom alert function to handle messages without using alert()
-def custom_alert(title, message, redirect_url=None):
-    return render_template('custom_alert.html', title=title, message=message, redirect_url=redirect_url)
+# --- Database Models ---
+class User(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(60), nullable=True)
+    is_google_user = db.Column(db.Boolean, default=False)
+    verified = db.Column(db.Boolean, default=False)
+    subscription_status = db.Column(db.String(20), default="Free") # Can be 'Free', 'Monthly', 'Annually'
+
+    def get_id(self):
+        return str(self.id)
+
+    @property
+    def is_authenticated(self):
+        return self.is_active
+
+    @property
+    def is_active(self):
+        return self.verified
+
+    @property
+    def is_anonymous(self):
+        return False
+
+    def __repr__(self):
+        return f"User('{self.email}', '{self.subscription_status}')"
 
 
-def is_logged_in():
-    return 'user' in session
-
-
-def is_verified():
-    if 'user' in session:
-        user = User.query.filter_by(email=session['user']['email']).first()
-        return user and user.is_verified
-    return False
-
-
-def is_activated():
-    if 'user' in session:
-        user = User.query.filter_by(email=session['user']['email']).first()
-        return user and user.is_activated
-    return False
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 
 # --- Routes ---
-
-# Home page route
-@app.route('/')
-def index():
-    user_name = session.get('user', {}).get('name')
-    is_authenticated = 'user' in session
-    return render_template('index.html', user_name=user_name, is_authenticated=is_authenticated)
+@app.route("/")
+@app.route("/home")
+def home():
+    return render_template("index.html", title="Home")
 
 
-# Login and Registration page route
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if 'user' in session:
-        return redirect(url_for('index'))
-
-    return render_template('login.html')
-
-
-# Email verification route
-@app.route('/verify_email/<token>')
-def verify_email(token):
-    try:
-        email = s.loads(token, salt='email-confirm', max_age=3600)
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
+    if request.method == "POST":
+        email = request.form.get("email")
+        password = request.form.get("password")
         user = User.query.filter_by(email=email).first()
         if user:
-            user.is_verified = True
-            db.session.commit()
-            flash('Your email has been verified successfully!', 'success')
-        else:
-            flash('Verification link is invalid.', 'danger')
-    except Exception as e:
-        flash('The verification link is expired or invalid.', 'danger')
+            flash("Email already registered.", "danger")
+            return redirect(url_for("register"))
 
-    return redirect(url_for('login'))
+        # Create a new user but don't set 'verified' to True yet
+        hashed_password = bcrypt.generate_password_hash(password).decode("utf-8")
+        new_user = User(email=email, password_hash=hashed_password)
+        db.session.add(new_user)
+        db.session.commit()
 
-
-# Activation page route (requires email to be verified)
-@app.route('/activate')
-def activate():
-    if not is_logged_in() or not is_verified():
-        return redirect(url_for('login'))
-
-    if is_activated():
-        return redirect(url_for('profile'))
-
-    return render_template('activate.html')
+        # Send verification email
+        send_verification_email(email)
+        flash(
+            "A verification email has been sent to your email address. Please verify to log in.",
+            "info",
+        )
+        return redirect(url_for("login"))
+    return render_template("register.html", title="Register")
 
 
-# Profile page route (requires activation)
-@app.route('/profile')
-def profile():
-    if not is_logged_in() or not is_verified() or not is_activated():
-        return redirect(url_for('login'))
+def send_verification_email(email):
+    token = s.dumps(email, salt="email-confirm-salt")
+    verification_link = url_for("verify_email", token=token, _external=True)
+    msg = Message(
+        "Verify Your Email Address",
+        recipients=[email],
+    )
+    msg.body = f"""Hello,
 
-    user_name = session['user']['name']
-    user_email = session['user']['email']
+Thank you for registering with Super Sales Manager!
+Please click the following link to verify your email address:
+{verification_link}
 
-    return render_template('profile.html', user_name=user_name, user_email=user_email)
-
-
-# Logout route
-@app.route('/logout')
-def logout():
-    session.pop('user', None)
-    return redirect(url_for('index'))
-
-
-# Endpoint for manual email registration
-@app.route('/register_email', methods=['POST'])
-def register_email():
-    name = request.json.get('name')
-    email = request.json.get('email')
-    password = request.json.get('password')
-
-    if not all([name, email, password]):
-        return jsonify({'success': False, 'message': 'All fields are required.'}), 400
-
-    user = User.query.filter_by(email=email).first()
-    if user:
-        return jsonify({'success': False, 'message': 'Email already registered.'}), 409
-
-    new_user = User(name=name, email=email)
-    new_user.set_password(password)
-    db.session.add(new_user)
-    db.session.commit()
-
-    token = s.dumps(email, salt='email-confirm')
-    msg = Message('Confirm Your Email',
-                  recipients=[email],
-                  body=f'Click the link to verify your email: {url_for("verify_email", token=token, _external=True)}')
+If you did not make this request, please ignore this email.
+"""
     mail.send(msg)
 
-    return jsonify(
-        {'success': True, 'message': 'Registration successful. Please check your email to verify your account.'})
+
+@app.route("/verify_email/<token>")
+def verify_email(token):
+    try:
+        email = s.loads(token, salt="email-confirm-salt", max_age=3600)  # Token valid for 1 hour
+    except:
+        flash("The verification link is invalid or has expired.", "danger")
+        return redirect(url_for("login"))
+
+    user = User.query.filter_by(email=email).first()
+    if user and not user.verified:
+        user.verified = True
+        db.session.commit()
+        flash("Your account has been verified! You can now log in.", "success")
+    elif user and user.verified:
+        flash("Your account has already been verified.", "info")
+    else:
+        flash("Verification failed. User not found.", "danger")
+
+    return redirect(url_for("login"))
 
 
-# OAuth login with Google
-@app.route('/google_login')
-def google_login():
-    if 'user' in session:
-        return redirect(url_for('index'))
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
+    if request.method == "POST":
+        email = request.form.get("email")
+        password = request.form.get("password")
+        user = User.query.filter_by(email=email).first()
+        if user and user.password_hash and bcrypt.check_password_hash(user.password_hash, password):
+            if user.verified:
+                login_user(user)
+                return redirect(url_for("profile"))
+            else:
+                flash("Please verify your email address to log in.", "warning")
+        else:
+            flash("Login Unsuccessful. Please check email and password", "danger")
+    return render_template("login.html", title="Login")
 
-    redirect_uri = url_for('authorize', _external=True)
+
+@app.route("/login/google")
+def login_google():
+    redirect_uri = url_for("authorize_google", _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
 
-# OAuth authorization callback
-@app.route('/authorize')
-def authorize():
+@app.route("/login/google/authorize")
+def authorize_google():
+    token = oauth.google.authorize_access_token()
+    user_info = oauth.google.parse_id_token(token)
+    user = User.query.filter_by(email=user_info["email"]).first()
+    if not user:
+        new_user = User(email=user_info["email"], is_google_user=True, verified=True)
+        db.session.add(new_user)
+        db.session.commit()
+        user = new_user
+    login_user(user)
+    return redirect(url_for("profile"))
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("home"))
+
+
+@app.route("/profile")
+@login_required
+def profile():
+    return render_template("profile.html", title="Profile")
+
+
+@app.route("/pricing")
+def pricing():
+    return render_template("pricing.html", title="Pricing")
+
+
+@app.route("/create-checkout-session", methods=["POST"])
+@login_required
+def create_checkout_session():
+    price_id = request.form.get("price_id")
     try:
-        token = oauth.google.authorize_access_token()
-        user_info = oauth.google.get('userinfo').json()
-
-        email = user_info['email']
-        user = User.query.filter_by(email=email).first()
-
-        if not user:
-            user = User(
-                name=user_info.get('name'),
-                email=email,
-                is_verified=True  # OAuth users are considered verified
-            )
-            db.session.add(user)
-            db.session.commit()
-
-        # Store user info in session
-        session['user'] = {
-            'id': user.id,
-            'name': user.name,
-            'email': user.email,
-            'is_verified': user.is_verified,
-            'is_activated': user.is_activated
-        }
-
-        if not user.is_activated:
-            return redirect(url_for('activate'))
-
-        return redirect(url_for('index'))
-    except Exception as e:
-        print(f"OAuth error: {e}")
-        return redirect(url_for('login'))
-
-
-@app.route('/create-payment', methods=['POST'])
-def create_payment():
-    if 'user' not in session:
-        return jsonify({'success': False, 'message': 'User not authenticated'}), 401
-
-    try:
-        data = request.get_json()
-        payment_method_id = data.get('paymentMethodId')
-        plan = data.get('plan')
-
-        # Define plan prices in cents
-        if plan == 'monthly':
-            amount = 1000  # $10.00
-        else:
-            return jsonify({'success': False, 'message': 'Invalid plan selected'}), 400
-
-        # Create a PaymentIntent with the provided payment method and amount
-        intent = stripe.PaymentIntent.create(
-            amount=amount,
-            currency='usd',
-            payment_method=payment_method_id,
-            confirmation_method='manual',
-            confirm=True,
-            description=f"Payment for {plan} plan for {session['user']['email']}",
-            return_url='https://super-sales-manager.onrender.com/'  # The public URL of your app
+        checkout_session = stripe.checkout.Session.create(
+            line_items=[
+                {
+                    "price": price_id,
+                    "quantity": 1,
+                },
+            ],
+            mode="subscription",
+            success_url=STRIPE_SUCCESS_URL.format(CHECKOUT_SESSION_ID="{CHECKOUT_SESSION_ID}"),
+            cancel_url=STRIPE_CANCEL_URL,
+            customer_email=current_user.email
         )
-
-        # Check the status of the PaymentIntent
-        if intent.status == 'succeeded':
-            # Payment was successful. Update the user's activation status in the database.
-            user = User.query.filter_by(email=session['user']['email']).first()
-            if user:
-                user.is_activated = True
-                db.session.commit()
-                # Update the session to reflect the change
-                session['user']['is_activated'] = True
-            else:
-                return jsonify({'success': False, 'message': 'User not found in database'}), 404
-
-            return jsonify({'success': True, 'message': 'Payment successful and account activated!'})
-        else:
-            # Handle other possible statuses, like 'requires_action'
-            return jsonify({'success': False, 'message': 'Payment requires additional action.'})
-
-    except stripe.error.CardError as e:
-        # A decline or other card-related error occurred
-        return jsonify({'success': False, 'message': e.user_message})
+        return jsonify({"id": checkout_session.id})
     except Exception as e:
-        # Handle any other unexpected errors
-        print(f"An error occurred: {e}")
-        return jsonify({'success': False, 'message': 'An unexpected error occurred.'}), 500
+        return jsonify(error=str(e)), 403
 
 
-if __name__ == '__main__':
-    # Initialize the database and create tables if they don't exist
+@app.route("/stripe-webhook", methods=["POST"])
+def stripe_webhook():
+    # This is a very basic webhook endpoint. For production, you should
+    # verify the signature of the incoming request.
+    # See https://stripe.com/docs/webhooks/signatures for more details.
+    payload = request.get_data()
+    event = None
+
+    try:
+        event = stripe.Event.construct_from(
+            payload, stripe.api_key
+        )
+    except ValueError as e:
+        # Invalid payload
+        print(f"Webhook Error: Invalid payload - {e}")
+        return "", 400
+
+    # Handle the event
+    if event.type == "checkout.session.completed":
+        session = event.data.object
+        customer_email = session.customer_details.email
+        user = User.query.filter_by(email=customer_email).first()
+        if user:
+            price_id = session.line_items.data[0].price.id
+            if price_id == STRIPE_MONTHLY_PLAN_ID:
+                user.subscription_status = "Monthly"
+            elif price_id == STRIPE_ANNUAL_PLAN_ID:
+                user.subscription_status = "Annually"
+            else:
+                user.subscription_status = "Free" # fallback
+            db.session.commit()
+            print(f"Subscription for {customer_email} updated to {user.subscription_status}")
+    else:
+        # For other event types, we can ignore them for this basic example.
+        print(f"Unhandled event type {event.type}")
+
+    return "", 200
+
+# To run this script, you must initialize the database first.
+# You can do this by running `python` in your terminal and typing:
+# `from app import db; db.create_all()`
+# This will create the `site.db` file in your project directory.
+# If you make changes to the models, you will need to delete the `site.db` file and run `db.create_all()` again.
+
+if __name__ == "__main__":
     with app.app_context():
         db.create_all()
     app.run(debug=True)
+
