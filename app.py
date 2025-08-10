@@ -1,4 +1,3 @@
-# app.py
 import os
 import secrets
 import stripe
@@ -35,9 +34,8 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
 app.config["STRIPE_PUBLIC_KEY"] = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 
-# Configure the database
-# Using os.environ.get() with a fallback for local development
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///site.db")
+# Configure the database to use the DATABASE_URL environment variable exclusively
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
@@ -290,5 +288,7 @@ def stripe_webhook():
 
 if __name__ == "__main__":
     with app.app_context():
+        # This will create all database tables in your Neon PostgreSQL database
         db.create_all()
     app.run(debug=True)
+
