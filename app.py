@@ -7,10 +7,8 @@ import secrets
 import stripe
 import json
 from urllib.parse import urljoin
-import random
-import string
-import uuid
-from datetime import datetime, timedelta
+import requests  # New import to make HTTP requests
+from datetime import datetime
 
 from flask import (
     Flask,
@@ -59,6 +57,9 @@ STRIPE_MONTHLY_PLAN_ID = os.environ.get("STRIPE_MONTHLY_PLAN_ID")
 STRIPE_ANNUAL_PLAN_ID = os.environ.get("STRIPE_ANNUAL_PLAN_ID")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
+# This new environment variable holds the URL of your deployed code generator service.
+CODE_GENERATOR_URL = os.environ.get("CODE_GENERATOR_URL")
+
 # Flask-Login configuration for managing user sessions.
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -105,43 +106,6 @@ class User(db.Model, UserMixin):
 def load_user(user_id):
     """Loads a user from the database by ID for Flask-Login."""
     return db.session.get(User, int(user_id))
-
-
-# --- Helper Functions for License Generation ---
-
-def generate_license_code(length=16):
-    """Generates a random, 16-character license code using uppercase letters and digits."""
-    chars = string.ascii_uppercase + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
-
-
-def generate_and_save_license(user_id, price_id):
-    """
-    Generates a unique license code and sets an expiry date based on the Stripe price_id.
-    This function is called by the Stripe webhook upon successful subscription.
-    """
-    user = User.query.get(user_id)
-    if not user:
-        print(f"Error: User with ID {user_id} not found.")
-        return
-
-    # Determine the license expiration date based on the subscription plan.
-    expiry_date = None
-    if price_id == STRIPE_MONTHLY_PLAN_ID:
-        expiry_date = datetime.utcnow() + timedelta(days=30)
-    elif price_id == STRIPE_ANNUAL_PLAN_ID:
-        expiry_date = datetime.utcnow() + timedelta(days=365)
-
-    # Generate a unique license code to avoid collisions.
-    license_code = generate_license_code()
-    while User.query.filter_by(license_code=license_code).first():
-        license_code = generate_license_code()
-
-    # Update the user record with the new license details.
-    user.license_code = license_code
-    user.license_expiry_date = expiry_date
-    db.session.commit()
-    print(f"Generated license code {license_code} for user {user.email}")
 
 
 # --- Routes ---
@@ -397,19 +361,34 @@ def stripe_webhook():
                 user.stripe_customer_id = customer_id
                 user.stripe_subscription_id = subscription_id
 
-                # Update subscription status and generate license code based on the plan.
+                # Determine the subscription status based on the plan.
+                subscription_status = "Free"
                 if price_id == STRIPE_MONTHLY_PLAN_ID:
-                    user.subscription_status = "Monthly"
+                    subscription_status = "Monthly"
                 elif price_id == STRIPE_ANNUAL_PLAN_ID:
-                    user.subscription_status = "Annually"
-                else:
-                    user.subscription_status = "Free"
+                    subscription_status = "Annually"
 
-                generate_and_save_license(user.id, price_id)
-
+                user.subscription_status = subscription_status
                 db.session.commit()
                 print(
                     f"User {user.email} subscription status updated to {user.subscription_status} via checkout session.")
+
+                # New: Send a POST request to the deployed license generator app.
+                try:
+                    if CODE_GENERATOR_URL:
+                        license_type = "annual" if price_id == STRIPE_ANNUAL_PLAN_ID else "monthly"
+                        requests.post(
+                            urljoin(CODE_GENERATOR_URL, "/generate_code"),
+                            json={
+                                "license_type": license_type,
+                                "user_email": user.email
+                            }
+                        )
+                        print(f"Successfully sent request to code generator for {user.email}.")
+                    else:
+                        print("CODE_GENERATOR_URL environment variable is not set. Cannot generate license code.")
+                except requests.exceptions.RequestException as e:
+                    print(f"Failed to send request to code generator: {e}")
 
     elif event["type"] == "customer.subscription.updated":
         # Handles a change to an existing subscription (e.g., plan change, payment failure).
@@ -488,4 +467,5 @@ if __name__ == "__main__":
         # within the application context. This is the correct way to do it
         # with Flask-SQLAlchemy.
         db.create_all()
+    # No need to specify a different port. The default is fine for local testing.
     app.run(debug=True)
