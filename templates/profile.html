@@ -23,8 +23,14 @@
                 <span class="px-3 py-1 text-sm font-bold text-green-800 bg-green-200 rounded-full dark:bg-green-700 dark:text-green-200">
                     {{ current_user.subscription_status }}
                 </span>
-                {% else %}
+                {% elif current_user.subscription_status == 'Annual' %}
+                <!-- Added a specific badge for the Annual plan -->
                 <span class="px-3 py-1 text-sm font-bold text-blue-800 bg-blue-200 rounded-full dark:bg-blue-700 dark:text-blue-200">
+                    {{ current_user.subscription_status }}
+                </span>
+                {% else %}
+                <!-- Fallback for any other status -->
+                <span class="px-3 py-1 text-sm font-bold text-gray-800 bg-gray-200 rounded-full dark:bg-gray-700 dark:text-gray-200">
                     {{ current_user.subscription_status }}
                 </span>
                 {% endif %}
@@ -60,6 +66,7 @@
         const errorMessage = document.getElementById('error-message');
 
         if (manageSubscriptionBtn) {
+            // Add a click event listener to the manage subscription button
             manageSubscriptionBtn.addEventListener('click', async () => {
                 // Show loading state
                 buttonText.textContent = "Loading...";

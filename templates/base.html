@@ -32,8 +32,19 @@
                         <a href="{{ url_for('pricing') }}" class="text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-300 font-medium">Pricing</a>
                     </li>
                     {% if current_user.is_authenticated %}
-                        <li>
+                        <!-- This list item now contains the profile link and a conditional badge -->
+                        <li class="flex items-center space-x-2">
                             <a href="{{ url_for('profile') }}" class="text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-300 font-medium">Profile</a>
+                            <!-- Conditional badge for paying users -->
+                            {% if current_user.subscription_status == 'Monthly' %}
+                            <span class="px-2 py-0.5 text-xs font-bold text-green-800 bg-green-200 rounded-full dark:bg-green-700 dark:text-green-200">
+                                {{ current_user.subscription_status }}
+                            </span>
+                            {% elif current_user.subscription_status == 'Annual' %}
+                            <span class="px-2 py-0.5 text-xs font-bold text-blue-800 bg-blue-200 rounded-full dark:bg-blue-700 dark:text-blue-200">
+                                {{ current_user.subscription_status }}
+                            </span>
+                            {% endif %}
                         </li>
                         <li>
                             <a href="{{ url_for('logout') }}" class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors duration-300 font-medium">Logout</a>

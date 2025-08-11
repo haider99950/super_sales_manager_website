@@ -1,9 +1,16 @@
 # C:\Users\Administrator\PycharmProjects\app_download_website\app.py
+# This file serves as the main application for a Flask web app that manages user
+# authentication, subscriptions via Stripe, and generates unique license codes.
+
 import os
 import secrets
 import stripe
-import json  # Import json for webhook payload parsing
+import json
 from urllib.parse import urljoin
+import random
+import string
+import uuid
+from datetime import datetime, timedelta
 
 from flask import (
     Flask,
@@ -28,35 +35,40 @@ from flask_bcrypt import Bcrypt
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 
-# Load environment variables from the .env file
+# --- App Initialization and Configuration ---
+
+# Load environment variables from a .env file.
+# This is a crucial security practice to keep sensitive keys out of the codebase.
 load_dotenv()
 
-# --- App Initialization and Configuration ---
 app = Flask(__name__)
+# The secret key is used for session management and security.
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
 
-# Configure the database to use the DATABASE_URL environment variable exclusively
+# Configure the database to use the DATABASE_URL environment variable.
+# Using an environment variable makes the app portable to different environments
+# (e.g., local development, production with Neon).
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
-# Stripe configuration
+# Stripe configuration, also using environment variables for security.
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY")
 STRIPE_MONTHLY_PLAN_ID = os.environ.get("STRIPE_MONTHLY_PLAN_ID")
 STRIPE_ANNUAL_PLAN_ID = os.environ.get("STRIPE_ANNUAL_PLAN_ID")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
-# Flask-Login configuration
+# Flask-Login configuration for managing user sessions.
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 login_manager.login_message_category = "info"
 
-# Bcrypt for password hashing
+# Bcrypt for securely hashing and verifying user passwords.
 bcrypt = Bcrypt(app)
 
-# Authlib for Google OAuth
+# Authlib for Google OAuth integration.
 oauth = OAuth(app)
 oauth.register(
     name="google",
@@ -69,15 +81,21 @@ oauth.register(
 
 # --- User model for Flask-Login with SQLAlchemy ---
 class User(db.Model, UserMixin):
+    """
+    Represents a user in the application database.
+    Includes fields for local and Google authentication, subscription status,
+    Stripe customer IDs, and the generated license code.
+    """
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(60), nullable=True)
+    password = db.Column(db.String(60), nullable=True)  # Nullable for Google users
     google_id = db.Column(db.String(120), unique=True, nullable=True)
     subscription_status = db.Column(db.String(20), nullable=False, default="Free")
-    # New column to store the Stripe Customer ID
     stripe_customer_id = db.Column(db.String(120), unique=True, nullable=True)
     stripe_subscription_id = db.Column(db.String(120), unique=True, nullable=True)
+    license_code = db.Column(db.String(120), unique=True, nullable=True)
+    license_expiry_date = db.Column(db.DateTime, nullable=True)
 
     def __repr__(self):
         return f"User('{self.email}', '{self.subscription_status}')"
@@ -85,20 +103,62 @@ class User(db.Model, UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Loads a user from the database by ID."""
+    """Loads a user from the database by ID for Flask-Login."""
     return db.session.get(User, int(user_id))
 
 
+# --- Helper Functions for License Generation ---
+
+def generate_license_code(length=16):
+    """Generates a random, 16-character license code using uppercase letters and digits."""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
+
+
+def generate_and_save_license(user_id, price_id):
+    """
+    Generates a unique license code and sets an expiry date based on the Stripe price_id.
+    This function is called by the Stripe webhook upon successful subscription.
+    """
+    user = User.query.get(user_id)
+    if not user:
+        print(f"Error: User with ID {user_id} not found.")
+        return
+
+    # Determine the license expiration date based on the subscription plan.
+    expiry_date = None
+    if price_id == STRIPE_MONTHLY_PLAN_ID:
+        expiry_date = datetime.utcnow() + timedelta(days=30)
+    elif price_id == STRIPE_ANNUAL_PLAN_ID:
+        expiry_date = datetime.utcnow() + timedelta(days=365)
+
+    # Generate a unique license code to avoid collisions.
+    license_code = generate_license_code()
+    while User.query.filter_by(license_code=license_code).first():
+        license_code = generate_license_code()
+
+    # Update the user record with the new license details.
+    user.license_code = license_code
+    user.license_expiry_date = expiry_date
+    db.session.commit()
+    print(f"Generated license code {license_code} for user {user.email}")
+
+
 # --- Routes ---
+
 @app.route("/")
 def home():
+    """Renders the home page."""
     return render_template("index.html", title="Home")
 
 
 @app.route("/pricing")
 @login_required
 def pricing():
-    # Pass all necessary Stripe keys to the pricing template.
+    """
+    Renders the pricing page, requiring the user to be logged in.
+    Passes Stripe keys to the template for client-side use.
+    """
     return render_template(
         "pricing.html",
         title="Pricing",
@@ -111,13 +171,19 @@ def pricing():
 @app.route("/profile")
 @login_required
 def profile():
-    # To ensure the latest subscription status is shown, refresh the user object
+    """
+    Renders the user's profile page.
+    db.session.refresh(current_user) is a critical line here to ensure the latest
+    data is fetched from the database, preventing stale data from being displayed
+    after a subscription change.
+    """
     db.session.refresh(current_user)
     return render_template("profile.html", title="Profile", user=current_user)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    """Handles user login with email and password."""
     if current_user.is_authenticated:
         return redirect(url_for("profile"))
 
@@ -139,6 +205,7 @@ def login():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    """Handles user registration with email and password."""
     if current_user.is_authenticated:
         return redirect(url_for("profile"))
 
@@ -163,6 +230,7 @@ def register():
 @app.route("/logout")
 @login_required
 def logout():
+    """Logs out the current user."""
     logout_user()
     flash("You have been logged out.", "success")
     return redirect(url_for("home"))
@@ -170,10 +238,10 @@ def logout():
 
 @app.route("/login/google")
 def login_google():
-    """Initiates the Google OAuth login process with nonce."""
+    """Initiates the Google OAuth login process."""
     if current_user.is_authenticated:
         return redirect(url_for("profile"))
-    # Generate and store a nonce to prevent replay attacks.
+    # A 'nonce' is generated and stored in the session to prevent replay attacks.
     nonce = secrets.token_urlsafe(32)
     session["nonce"] = nonce
     return oauth.google.authorize_redirect(url_for("callback_google", _external=True), nonce=nonce)
@@ -181,13 +249,17 @@ def login_google():
 
 @app.route("/callback/google")
 def callback_google():
-    """Handles the callback from Google OAuth."""
+    """
+    Handles the callback from Google OAuth.
+    It verifies the nonce and handles three cases:
+    1. An existing user logs in.
+    2. A new user with an existing email links their Google account.
+    3. A completely new user is registered.
+    """
     try:
-        # Pass the request to authorize_access_token, which handles nonce verification
         token = oauth.google.authorize_access_token()
         user_info = oauth.google.parse_id_token(token, nonce=session.get("nonce"))
-        # Clear the nonce from the session after use
-        del session["nonce"]
+        del session["nonce"]  # Remove the nonce after successful verification
 
         google_id = user_info["sub"]
         email = user_info["email"]
@@ -201,14 +273,12 @@ def callback_google():
             existing_user_with_email = User.query.filter_by(email=email).first()
 
             if existing_user_with_email:
-                # An account with this email exists, link the Google ID to it.
                 existing_user_with_email.google_id = google_id
                 db.session.commit()
                 login_user(existing_user_with_email)
                 flash("Your Google account has been linked to your existing account and you have been logged in!",
                       "success")
             else:
-                # New user, register them with their Google ID.
                 new_user = User(email=email, google_id=google_id)
                 db.session.add(new_user)
                 db.session.commit()
@@ -225,18 +295,20 @@ def callback_google():
 @app.route("/create-checkout-session", methods=["POST"])
 @login_required
 def create_checkout_session():
-    """Creates a Stripe Checkout Session for a subscription."""
+    """
+    Creates a Stripe Checkout Session for a subscription.
+    This route handles both new and existing Stripe customers and attaches
+    user and price metadata for use in the webhook.
+    """
     try:
         price_id = request.form.get("price_id")
 
-        # Check if the user already has a Stripe customer ID
         if not current_user.stripe_customer_id:
-            # Create a new customer if one does not exist
             customer = stripe.Customer.create(
                 email=current_user.email,
             )
             current_user.stripe_customer_id = customer.id
-            db.session.commit()  # Save the new customer ID to the database
+            db.session.commit()
 
         customer_id = current_user.stripe_customer_id
 
@@ -248,14 +320,15 @@ def create_checkout_session():
                 },
             ],
             mode="subscription",
+            # Use urljoin to create absolute URLs for success and cancel.
             success_url=urljoin(request.url_root, url_for("success")),
             cancel_url=urljoin(request.url_root, url_for("cancel")),
-            metadata={"user_id": current_user.id},
+            # Metadata is crucial for linking Stripe events back to the user in the webhook.
+            metadata={"user_id": current_user.id, "price_id": price_id},
             customer=customer_id,
         )
         return jsonify({"id": checkout_session.id})
     except Exception as e:
-        # Log the error for debugging
         print(f"Error creating checkout session: {e}")
         return jsonify(error=str(e)), 403
 
@@ -263,7 +336,7 @@ def create_checkout_session():
 @app.route("/success")
 @login_required
 def success():
-    # Render the success page, which will poll for the subscription status update.
+    """Renders the success page after a successful checkout."""
     flash("Subscription was successful! We're updating your account now.", "success")
     return render_template("success.html", title="Success")
 
@@ -271,26 +344,34 @@ def success():
 @app.route("/get-subscription-status")
 @login_required
 def get_subscription_status():
-    """Endpoint for polling the user's subscription status."""
-    # This is a critical line to ensure we get the latest data from the database
-    db.session.refresh(current_user)
+    """
+    This is an API endpoint for the front-end to poll for the user's updated subscription status.
+    It's used on the success page to provide a seamless user experience.
+    """
+    db.session.refresh(current_user)  # Ensure the latest data is retrieved from the DB
     return jsonify({"status": current_user.subscription_status})
 
 
 @app.route("/cancel")
 def cancel():
+    """Renders the cancel page after a checkout is cancelled."""
     flash("Subscription was cancelled.", "danger")
     return redirect(url_for("pricing"))
 
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    """Handles Stripe webhook events to update user subscription status."""
+    """
+    Handles Stripe webhook events. This is the core logic for keeping the
+    application's database in sync with Stripe subscription changes.
+    It handles checkout completion, subscription updates, and cancellations.
+    """
     payload = request.get_data()
     sig_header = request.headers.get("stripe-signature")
     event = None
 
     try:
+        # Verifies the webhook signature to ensure the event is from Stripe and not spoofed.
         event = stripe.Webhook.construct_event(
             payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
@@ -307,31 +388,31 @@ def stripe_webhook():
         user_id = session.get("metadata", {}).get("user_id")
         customer_id = session.get("customer")
         subscription_id = session.get("subscription")
+        price_id = session.get("metadata", {}).get("price_id")
 
         if user_id:
             user = User.query.get(int(user_id))
             if user:
-                # Update the user's Stripe IDs
+                # Update user's Stripe IDs.
                 user.stripe_customer_id = customer_id
                 user.stripe_subscription_id = subscription_id
 
-                # Get the subscription status from the session and update the user
-                if subscription_id:
-                    subscription = stripe.Subscription.retrieve(subscription_id)
-                    price_id = subscription['items']['data'][0]['price']['id']
+                # Update subscription status and generate license code based on the plan.
+                if price_id == STRIPE_MONTHLY_PLAN_ID:
+                    user.subscription_status = "Monthly"
+                elif price_id == STRIPE_ANNUAL_PLAN_ID:
+                    user.subscription_status = "Annually"
+                else:
+                    user.subscription_status = "Free"
 
-                    if price_id == STRIPE_MONTHLY_PLAN_ID:
-                        user.subscription_status = "Monthly"
-                    elif price_id == STRIPE_ANNUAL_PLAN_ID:
-                        user.subscription_status = "Annually"
-                    else:
-                        user.subscription_status = "Free"
+                generate_and_save_license(user.id, price_id)
 
                 db.session.commit()
                 print(
                     f"User {user.email} subscription status updated to {user.subscription_status} via checkout session.")
 
     elif event["type"] == "customer.subscription.updated":
+        # Handles a change to an existing subscription (e.g., plan change, payment failure).
         subscription_data = event['data']['object']
         customer_id = subscription_data.get('customer')
 
@@ -344,37 +425,44 @@ def stripe_webhook():
                     subscription_status = "Monthly"
                 elif price_id == STRIPE_ANNUAL_PLAN_ID:
                     subscription_status = "Annually"
-            else:
-                # The subscription is not active, set it to Free
-                subscription_status = "Free"
 
             user.subscription_status = subscription_status
+
+            # Revoke the license if the subscription is no longer active.
+            if subscription_status == "Free":
+                user.license_code = None
+                user.license_expiry_date = None
+
             db.session.commit()
             print(f"Subscription for user {user.email} updated to {user.subscription_status}")
 
     elif event["type"] == "customer.subscription.deleted":
+        # Handles a subscription cancellation.
         subscription_data = event['data']['object']
         customer_id = subscription_data.get('customer')
 
         user = User.query.filter_by(stripe_customer_id=customer_id).first()
         if user:
             user.subscription_status = "Free"
+            user.license_code = None  # Revoke the license.
+            user.license_expiry_date = None
             db.session.commit()
-            print(f"Subscription for user {user.email} was deleted. Status set to Free.")
+            print(f"Subscription for user {user.email} was deleted. Status set to Free. License revoked.")
 
     return "", 200
 
 
-# New route to create a session for the Stripe Customer Portal
 @app.route('/create-customer-portal-session', methods=['POST'])
 @login_required
 def create_customer_portal_session():
-    """Creates a Stripe Customer Portal session for the current user."""
+    """
+    Creates a Stripe Customer Portal session, allowing users to manage their billing,
+    payment methods, and subscriptions directly with Stripe.
+    """
     try:
         customer_id = current_user.stripe_customer_id
 
         if not customer_id:
-            # If for some reason the customer ID is missing, create one.
             customer = stripe.Customer.create(
                 email=current_user.email,
             )
@@ -396,6 +484,8 @@ def create_customer_portal_session():
 
 if __name__ == "__main__":
     with app.app_context():
-        # This will create all database tables in your Neon PostgreSQL database
+        # This will create all database tables based on the User model
+        # within the application context. This is the correct way to do it
+        # with Flask-SQLAlchemy.
         db.create_all()
     app.run(debug=True)

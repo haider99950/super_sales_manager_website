@@ -8,26 +8,34 @@
         <p class="text-gray-600 dark:text-gray-400 mb-6">
             We're processing your subscription. Please wait while we update your account.
         </p>
-        <div class="loader-wrapper mx-auto mb-6">
+
+        <!-- Container for the spinner and success icon -->
+        <div class="loader-wrapper mx-auto mb-6 flex items-center justify-center h-24 w-24">
+            <!-- Loading Spinner -->
             <div id="loader-spinner" class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
+
+            <!-- Success Icon (hidden initially) -->
+            <div id="success-icon" class="hidden flex items-center justify-center rounded-full bg-green-500 text-white w-24 h-24 absolute">
+                <!-- SVG Checkmark Icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
         </div>
+
         <p id="status-message" class="text-sm text-gray-500 dark:text-gray-400">Your account is being updated...</p>
     </div>
 </div>
 
 <style>
+    /* Keyframes for the spinner animation */
     .loader {
         border-top-color: #4f46e5;
         animation: spinner 1.5s linear infinite;
     }
-
     @keyframes spinner {
-        0% {
-            transform: rotate(0deg);
-        }
-        100% {
-            transform: rotate(360deg);
-        }
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 </style>
 
@@ -36,47 +44,58 @@
         const statusContainer = document.getElementById("status-container");
         const statusMessage = document.getElementById("status-message");
         const loaderSpinner = document.getElementById("loader-spinner");
+        const successIcon = document.getElementById("success-icon");
+
+        // The URL for the backend endpoint that checks the user's subscription status.
         const statusUrl = "{{ url_for('get_subscription_status') }}";
+        // The URL to the user's profile page for redirection.
         const profileUrl = "{{ url_for('profile') }}";
 
         let retryCount = 0;
         const maxRetries = 5;
-        let retryDelay = 2000; // Start with a 2-second delay
+        let retryDelay = 2000; // Start with a 2-second delay for the first retry.
 
+        /**
+         * The core function that polls the backend to check the subscription status.
+         */
         const checkStatus = async () => {
             try {
+                // Fetch the subscription status from the backend.
                 const response = await fetch(statusUrl);
                 const data = await response.json();
 
+                // If the subscription status is no longer 'Free', it means the webhook has processed.
                 if (data.status !== 'Free') {
-                    // Subscription has been updated, redirect to profile
                     statusMessage.textContent = "Success! Redirecting you now...";
-                    loaderSpinner.classList.remove('loader');
-                    loaderSpinner.classList.add('border-green-500');
-                    // Give a moment for the user to see the success message before redirecting
+
+                    // Hide the spinner and show the success icon.
+                    loaderSpinner.classList.add('hidden');
+                    successIcon.classList.remove('hidden');
+
+                    // Redirect the user to the profile page after a short delay.
                     setTimeout(() => {
                         window.location.href = profileUrl;
                     }, 1500);
                 } else {
-                    // Subscription is still 'Free', poll again
+                    // If the status is still 'Free', poll again using exponential backoff.
                     console.log("Status is still free. Retrying in " + retryDelay / 1000 + " seconds...");
                     retryCount++;
                     if (retryCount < maxRetries) {
-                        // Use exponential backoff for retries
+                        // Increase the delay for the next retry.
                         retryDelay *= 1.5;
                         setTimeout(checkStatus, retryDelay);
                     } else {
-                        // Max retries reached, display an error message
+                        // If max retries are reached, display an error and a link to the profile.
                         statusMessage.innerHTML = `
                             <p class="text-red-500">Something went wrong. The update took too long.</p>
                             <p>You can try refreshing or clicking the button below.</p>
                             <a href="${profileUrl}" class="btn bg-indigo-600 text-white hover:bg-indigo-700 mt-4 px-4 py-2 rounded-lg">Go to Profile</a>
                         `;
-                        loaderSpinner.classList.remove('loader');
-                        loaderSpinner.classList.add('hidden'); // Hide the spinner on failure
+                        loaderSpinner.classList.add('hidden');
                     }
                 }
             } catch (error) {
+                // Handle network errors during the fetch request.
                 console.error("Error fetching subscription status:", error);
                 retryCount++;
                 if (retryCount < maxRetries) {
@@ -84,18 +103,18 @@
                     statusMessage.textContent = `Error connecting to the server. Retrying... (${retryCount}/${maxRetries})`;
                     setTimeout(checkStatus, retryDelay);
                 } else {
+                    // If max retries are reached due to network issues, show an error message.
                     statusMessage.innerHTML = `
                         <p class="text-red-500">Failed to connect to the server. Please check your connection.</p>
                         <p>You can try refreshing or clicking the button below.</p>
                         <a href="${profileUrl}" class="btn bg-indigo-600 text-white hover:bg-indigo-700 mt-4 px-4 py-2 rounded-lg">Go to Profile</a>
                     `;
-                    loaderSpinner.classList.remove('loader');
                     loaderSpinner.classList.add('hidden');
                 }
             }
         };
 
-        // Start the polling process
+        // Start the polling process when the page loads.
         checkStatus();
     });
 </script>

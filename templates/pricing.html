@@ -50,42 +50,63 @@
 
 <script src="https://js.stripe.com/v3/"></script>
 <script>
+    // Initialize the Stripe.js client with the publishable key from the server.
+    // The key is passed from the Flask backend and injected into the template.
     const stripe = Stripe("{{ stripe_publishable_key }}");
 
-    // Function to handle form submissions
+    /**
+     * Handles the form submission for both monthly and annual plans.
+     * This function prevents the default form submission, makes a fetch
+     * call to the backend to create a Stripe Checkout Session, and then
+     * redirects the user to the Stripe hosted payment page.
+     * @param {Event} event The submit event from the form.
+     */
     async function handleCheckout(event) {
+        // Prevent the browser from performing its default form submission.
         event.preventDefault();
+
+        // Get the price_id from the hidden input field within the submitted form.
         const priceId = event.target.querySelector('input[name="price_id"]').value;
 
         try {
+            // Make a POST request to the backend to create a new checkout session.
             const response = await fetch("/create-checkout-session", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `price_id=${priceId}`,
+                body: `price_id=${priceId}`, // Send the price_id to the backend.
             });
 
-            // Check if the server redirected the user (e.g., to the login page)
+            // If the server returns a redirect response (e.g., to a login page
+            // if the user isn't authenticated), handle the redirect client-side.
             if (response.redirected) {
                 window.location.href = response.url;
                 return;
             }
 
+            // Parse the JSON response from the backend.
             const data = await response.json();
 
+            // If the backend successfully created a session, it will return a session ID.
             if (data.id) {
+                // Use the Stripe.js library to redirect the user to Stripe Checkout.
                 const { error } = await stripe.redirectToCheckout({ sessionId: data.id });
                 if (error) {
+                    // Log any errors that occur during the redirect process.
                     console.error("Stripe Checkout error:", error);
                 }
             } else if (data.error) {
+                // Handle and log any errors sent from the backend.
                 console.error("Backend error:", data.error);
             }
         } catch (error) {
+            // Catch and log any network-related errors that occur during the fetch call.
             console.error("Fetch error:", error);
         }
     }
 
-    // Attach event listeners to both forms
+    // Attach event listeners to both the monthly and annual plan forms.
+    // This ensures that when either form is submitted, our custom `handleCheckout`
+    // function is called instead of the default browser behavior.
     const monthlyForm = document.getElementById("checkout-form-monthly");
     if (monthlyForm) {
         monthlyForm.addEventListener("submit", handleCheckout);
