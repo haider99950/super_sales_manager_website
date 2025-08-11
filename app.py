@@ -48,6 +48,17 @@ app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
 # (e.g., local development, production with Neon).
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# The fix for the PostgreSQL 'SSL connection closed unexpectedly' error.
+# pool_pre_ping=True: Tests the connection before each use, automatically
+#                     reconnecting if it has been closed by the server.
+# pool_recycle=280: Recycles connections after 280 seconds, preventing them
+#                   from reaching the typical 300-second idle timeout of most databases.
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 280
+}
+
 db = SQLAlchemy(app)
 
 # Stripe configuration, also using environment variables for security.
